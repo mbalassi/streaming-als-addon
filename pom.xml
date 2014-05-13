@@ -6,8 +6,8 @@
 
 	<groupId>hu.sztaki</groupId>
 	<version>0.1</version>
-	<artifactId>hadoop-tutorial</artifactId>
-	<name>hadoop-tutorial</name>
+	<artifactId>streaming-als-addon</artifactId>
+	<name>streaming-als-addon</name>
 
 	<packaging>jar</packaging>
 
@@ -19,7 +19,7 @@
 	<dependencies>
 		<dependency>
 			<groupId>org.apache.storm</groupId>
-			<artifactId>storm</artifactId>
+			<artifactId>storm-core</artifactId>
 			<version>0.9.1-incubating</version>
 		</dependency>
 	</dependencies>

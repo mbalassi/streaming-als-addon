@@ -1,5 +1,7 @@
-package storm.starter;
+package hu.sztaki.streaming.als.addon.prediction;
 
+import java.util.HashMap;
+import java.util.Map;
 
 import backtype.storm.Config;
 import backtype.storm.LocalCluster;
@@ -7,7 +9,6 @@ import backtype.storm.StormSubmitter;
 import backtype.storm.spout.SpoutOutputCollector;
 import backtype.storm.task.TopologyContext;
 import backtype.storm.topology.BasicOutputCollector;
-import backtype.storm.topology.IRichBolt;
 import backtype.storm.topology.OutputFieldsDeclarer;
 import backtype.storm.topology.TopologyBuilder;
 import backtype.storm.topology.base.BaseBasicBolt;
@@ -15,14 +16,15 @@ import backtype.storm.topology.base.BaseRichSpout;
 import backtype.storm.tuple.Fields;
 import backtype.storm.tuple.Tuple;
 import backtype.storm.tuple.Values;
-import backtype.storm.utils.Utils;
-
 
 public class ALSPredTopology {
 
+	private static final int TopItemCount = 10;
+	private static final int PartitionCount = 10;
+
 	public static class IDSpout extends BaseRichSpout {
 		SpoutOutputCollector _collector;
-		
+
 		@Override
 		public void open(Map conf, TopologyContext context, SpoutOutputCollector collector) {
 			_collector = collector;
@@ -30,15 +32,21 @@ public class ALSPredTopology {
 
 		@Override
 		public void nextTuple() {
-			
+
 			long uid = getNextID();
-			
-			_collector.emit(new Values(uid,getUserVector(uid)));
-			
+
+			_collector.emit(new Values(uid, getUserVector(uid)));
+
 		}
 
 		public long getNextID() {
-			
+			// TODO
+			return 42L;
+		}
+
+		public double[] getUserVector(long uid) {
+			// TODO
+			return new double[] { 0.1, 0.2 };
 		}
 
 		@Override
@@ -51,39 +59,71 @@ public class ALSPredTopology {
 
 		@Override
 		public void declareOutputFields(OutputFieldsDeclarer declarer) {
-			declarer.declare(new Fields("uid","userVector"));
+			declarer.declare(new Fields("uid", "userVector"));
 		}
 	}
-
-	
 
 	public static class partialTopItemsBolt extends BaseBasicBolt {
 
-	
+		double[][] partialItemFeature = new double[][] { { 0.1, 0.2 }, { 0.3, 0.4 } };
+		long[] itemIDs = new long[] { 1L, 10L }; // Global IDs of the Item
+													// partition
+
+		double[] partialTopItemScores = new double[TopItemCount];
+		long[] partialTopItemIDs = new long[TopItemCount];
+
 		@Override
 		public void execute(Tuple tuple, BasicOutputCollector collector) {
-			String word = tuple.getString(0);
-			
+			double[] userVector = (double[]) tuple.getValueByField("userVector");
+
+			for (int item = 0; item < TopItemCount; item++) {
+				double score = 0;
+				for (int i = 0; i < partialItemFeature[item].length; i++) {
+					score += partialItemFeature[item][i] * userVector[i];
+				}
+				// Assuming scores are positive
+				for (int i = 0; i < partialTopItemScores.length; i++) {
+					if (score > partialTopItemScores[i]) {
+						partialTopItemScores[i] = score;
+						partialTopItemIDs[i] = itemIDs[item];
+						break;
+					}
+				}
+			}
+			collector.emit(new Values(tuple.getLong(0), partialTopItemIDs, partialTopItemScores));
 		}
 
 		@Override
 		public void declareOutputFields(OutputFieldsDeclarer declarer) {
-			declarer.declare(new Fields("uid", "pTopIDs","pTopScores"));
+			declarer.declare(new Fields("uid", "pTopIDs", "pTopScores"));
 		}
 	}
-	
+
 	public static class topItemsBolt extends BaseBasicBolt {
 
-	
+		Map<Long, Integer> partitionCount = new HashMap<Long, Integer>();
+		Map<Long, Long[]> topIDs = new HashMap<Long, Long[]>();
+		Map<Long, Double[]> topScores = new HashMap<Long, Double[]>();
+
 		@Override
 		public void execute(Tuple tuple, BasicOutputCollector collector) {
-			
-			
+			Long uid = tuple.getLong(0);
+			if (partitionCount.containsKey(uid)) {
+				Integer newCount = partitionCount.get(uid) - 1;
+				if (newCount > 0) {
+					partitionCount.put(uid, newCount);
+				} else {
+					partitionCount.remove(uid);
+				}
+			} else {
+				partitionCount.put(uid, PartitionCount - 1);
+			}
+
 		}
 
 		@Override
 		public void declareOutputFields(OutputFieldsDeclarer declarer) {
-			declarer.declare(new Fields("uid", "topIDs","topScores"));
+			declarer.declare(new Fields("uid", "topIDs", "topScores"));
 		}
 	}
 
@@ -93,7 +133,8 @@ public class ALSPredTopology {
 		builder.setSpout("IDSpuot", new IDSpout(), 1);
 
 		builder.setBolt("partialTop", new partialTopItemsBolt(), 1).allGrouping("IDSpuot");
-		builder.setBolt("topItems", new topItemsBolt(), 1).fieldsGrouping("partialTop", new Fields("uid"));
+		builder.setBolt("topItems", new topItemsBolt(), 1).fieldsGrouping("partialTop",
+				new Fields("uid"));
 
 		Config conf = new Config();
 		conf.setDebug(true);
