@@ -6,17 +6,6 @@ import backtype.storm.StormSubmitter;
 import backtype.storm.topology.TopologyBuilder;
 import backtype.storm.tuple.Fields;
 
-//import org.apache.storm.hdfs.bolt.format.DelimitedRecordFormat;
-//import org.apache.storm.hdfs.bolt.format.DefaultFileNameFormat;
-//import org.apache.storm.hdfs.bolt.format.FileNameFormat;
-//import org.apache.storm.hdfs.bolt.format.RecordFormat;
-//import org.apache.storm.hdfs.bolt.sync.CountSyncPolicy;
-//import org.apache.storm.hdfs.bolt.sync.SyncPolicy;
-//import org.apache.storm.hdfs.bolt.rotation.FileRotationPolicy;
-//import org.apache.storm.hdfs.bolt.rotation.FileSizeRotationPolicy;
-//import org.apache.storm.hdfs.bolt.rotation.FileSizeRotationPolicy.Units;
-//import org.apache.storm.hdfs.bolt.HdfsBolt;
-
 public class CellPartitionTopology {
 
 	private static void wrongArgs() {
