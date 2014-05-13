@@ -1,7 +1,9 @@
 package hu.sztaki.streaming.als.addon.prediction;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Random;
 
 import backtype.storm.Config;
 import backtype.storm.LocalCluster;
@@ -19,8 +21,8 @@ import backtype.storm.tuple.Values;
 
 public class ALSPredTopology {
 
-	private static final int TopItemCount = 10;
-	private static final int PartitionCount = 10;
+	private static final int TOP_ITEM_COUNT = 2;
+	private static final int PARTITION_COUNT = 2;
 
 	public static class IDSpout extends BaseRichSpout {
 		SpoutOutputCollector _collector;
@@ -34,19 +36,25 @@ public class ALSPredTopology {
 		public void nextTuple() {
 
 			long uid = getNextID();
-
 			_collector.emit(new Values(uid, getUserVector(uid)));
 
+			try {
+				Thread.sleep(1000);
+			} catch (InterruptedException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
 		}
 
 		public long getNextID() {
-			// TODO
-			return 42L;
+			// TODO get user IDs from some queue
+			Random rnd = new Random();
+			return rnd.nextInt(10);
 		}
 
-		public double[] getUserVector(long uid) {
-			// TODO
-			return new double[] { 0.1, 0.2 };
+		public Double[] getUserVector(long uid) {
+			// TODO get user vector from database
+			return new Double[] { 0.1, 0.2, 1. };
 		}
 
 		@Override
@@ -65,32 +73,46 @@ public class ALSPredTopology {
 
 	public static class partialTopItemsBolt extends BaseBasicBolt {
 
-		double[][] partialItemFeature = new double[][] { { 0.1, 0.2 }, { 0.3, 0.4 } };
-		long[] itemIDs = new long[] { 1L, 10L }; // Global IDs of the Item
-													// partition
+		// TODO: generate partial item feature matrix from the database
+		double[][] partialItemFeature = new double[][] { { 0.1, 0.2, 1 }, { 0.3, 0.4, 1 },
+				{ 1., 1., 1 } };
+		Long[] itemIDs = new Long[] { 1L, 10L, 11L }; // Global IDs of the Item
+														// partition
 
-		double[] partialTopItemScores = new double[TopItemCount];
-		long[] partialTopItemIDs = new long[TopItemCount];
+		Double[] partialTopItemScores = new Double[TOP_ITEM_COUNT];
+		Long[] partialTopItemIDs = new Long[TOP_ITEM_COUNT];
 
 		@Override
 		public void execute(Tuple tuple, BasicOutputCollector collector) {
-			double[] userVector = (double[]) tuple.getValueByField("userVector");
+			Double[] userVector = (Double[]) tuple.getValueByField("userVector");
+			Double[] scores = new Double[itemIDs.length];
 
-			for (int item = 0; item < TopItemCount; item++) {
-				double score = 0;
+			// calculate scores for all items
+			for (int item = 0; item < itemIDs.length; item++) {
+				Double score = 0.;
 				for (int i = 0; i < partialItemFeature[item].length; i++) {
 					score += partialItemFeature[item][i] * userVector[i];
 				}
+				scores[item] = score;
+
+			}
+
+			// get the top TOP_ITEM_COUNT items for the partitions
+			partialTopItemIDs = Arrays.copyOfRange(itemIDs, 0, TOP_ITEM_COUNT);
+			partialTopItemScores = Arrays.copyOfRange(scores, 0, TOP_ITEM_COUNT);
+
+			for (int item = TOP_ITEM_COUNT; item < itemIDs.length; item++) {
 				// Assuming scores are positive
 				for (int i = 0; i < partialTopItemScores.length; i++) {
-					if (score > partialTopItemScores[i]) {
-						partialTopItemScores[i] = score;
+					if (scores[item] > partialTopItemScores[i]) {
+						partialTopItemScores[i] = scores[item];
 						partialTopItemIDs[i] = itemIDs[item];
 						break;
 					}
 				}
 			}
 			collector.emit(new Values(tuple.getLong(0), partialTopItemIDs, partialTopItemScores));
+
 		}
 
 		@Override
@@ -108,15 +130,32 @@ public class ALSPredTopology {
 		@Override
 		public void execute(Tuple tuple, BasicOutputCollector collector) {
 			Long uid = tuple.getLong(0);
+			Long[] pTopIds = (Long[]) tuple.getValue(1);
+			Double[] pTopScores = (Double[]) tuple.getValue(2);
+
 			if (partitionCount.containsKey(uid)) {
+
+				updateTopItems(uid, pTopIds, pTopScores);
 				Integer newCount = partitionCount.get(uid) - 1;
+
 				if (newCount > 0) {
 					partitionCount.put(uid, newCount);
 				} else {
+					collector.emit(new Values(uid, topIDs.get(uid), topScores.get(uid)));
 					partitionCount.remove(uid);
+					topIDs.remove(uid);
+					topScores.remove(uid);
+
 				}
 			} else {
-				partitionCount.put(uid, PartitionCount - 1);
+
+				if (PARTITION_COUNT == 1) {
+					collector.emit(new Values(uid, pTopIds, pTopScores));
+				} else {
+					partitionCount.put(uid, PARTITION_COUNT - 1);
+					topIDs.put(uid, pTopIds);
+					topScores.put(uid, pTopScores);
+				}
 			}
 
 		}
@@ -125,6 +164,42 @@ public class ALSPredTopology {
 		public void declareOutputFields(OutputFieldsDeclarer declarer) {
 			declarer.declare(new Fields("uid", "topIDs", "topScores"));
 		}
+
+		private void updateTopItems(Long uid, Long[] pTopIDs, Double[] pTopScores) {
+
+			Double[] currentTopScores = topScores.get(uid);
+			Long[] currentTopIDs = topIDs.get(uid);
+
+			for (int i = 0; i < pTopScores.length; i++) {
+				if (!Arrays.asList(currentTopIDs).contains(pTopIDs[i])) {
+					for (int j = 0; j < currentTopScores.length; j++) {
+						if (pTopScores[i] > currentTopScores[j]) {
+							currentTopScores[j] = pTopScores[i];
+							currentTopIDs[j] = pTopIDs[i];
+							break;
+						}
+					}
+				}
+			}
+
+		}
+	}
+
+	public static class topItemProcessBolt extends BaseBasicBolt {
+
+		@Override
+		public void execute(Tuple tuple, BasicOutputCollector collector) {
+
+			System.out.println("User:" + tuple.getLong(0));
+			System.out.println("Top IDs:" + Arrays.toString((Long[]) tuple.getValue(1)));
+
+		}
+
+		@Override
+		public void declareOutputFields(OutputFieldsDeclarer arg0) {
+
+		}
+
 	}
 
 	public static void main(String[] args) throws Exception {
@@ -132,9 +207,11 @@ public class ALSPredTopology {
 		TopologyBuilder builder = new TopologyBuilder();
 		builder.setSpout("IDSpuot", new IDSpout(), 1);
 
-		builder.setBolt("partialTop", new partialTopItemsBolt(), 1).allGrouping("IDSpuot");
+		builder.setBolt("partialTop", new partialTopItemsBolt(), PARTITION_COUNT).allGrouping(
+				"IDSpuot");
 		builder.setBolt("topItems", new topItemsBolt(), 1).fieldsGrouping("partialTop",
 				new Fields("uid"));
+		builder.setBolt("topItemProcess", new topItemProcessBolt(), 1).shuffleGrouping("topItems");
 
 		Config conf = new Config();
 		conf.setDebug(true);
